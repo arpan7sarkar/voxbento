@@ -971,6 +971,88 @@ async def test_delete_room_removes_its_transcripts_and_memberships(db: AsyncSess
 
 
 @pytest.mark.anyio
+async def test_delete_room_removes_booth_translation_languages(db: AsyncSession):
+    """The booth delete in delete_room is a Core bulk delete, so no ORM cascade runs."""
+    from portal.models import BoothTranslationLanguage
+
+    ev = await create_event(db, slug="ev-btl", display_name="Ev")
+    room = await create_room(db, event_id=ev.id, display_name="Hall")
+    booth = await create_booth(db, event_id=ev.id, room_id=room.id, language_code="en", language_name="English")
+    db.add(BoothTranslationLanguage(booth_id=booth.id, language_code="es", language_name="Spanish"))
+    await db.flush()
+
+    assert await delete_room(db, room.id) is True
+    left = (
+        (await db.execute(sa.select(BoothTranslationLanguage).where(BoothTranslationLanguage.booth_id == booth.id)))
+        .scalars()
+        .all()
+    )
+    assert left == []
+
+
+@pytest.mark.anyio
+async def test_delete_room_clears_another_rooms_relay_pointer(db: AsyncSession):
+    """A second room can relay from this room's booths; those pointers go too."""
+    ev = await create_event(db, slug="ev-relay-rm", display_name="Ev")
+    doomed = await create_room(db, event_id=ev.id, display_name="Doomed")
+    other = await create_room(db, event_id=ev.id, display_name="Other")
+    booth = await create_booth(db, event_id=ev.id, room_id=doomed.id, language_code="en", language_name="English")
+    other.relay_booth_id = booth.id
+    await db.flush()
+
+    assert await delete_room(db, doomed.id) is True
+    fresh = await get_room_by_id(db, other.id)
+    assert fresh is not None
+    assert fresh.relay_booth_id is None
+
+
+@pytest.mark.anyio
+async def test_delete_event_clears_a_cross_event_parent_token(db: AsyncSession):
+    """oauth_tokens.parent_token_id is SET NULL, which SQLite never enforces.
+
+    No current path builds a chain across events, so this guards the invariant rather
+    than a reachable bug.
+    """
+    from portal.database import create_user
+    from portal.models import DeveloperAccount, OAuthClient, OAuthToken
+
+    doomed = await create_event(db, slug="ev-tok-doomed", display_name="Doomed")
+    keep = await create_event(db, slug="ev-tok-keep", display_name="Keep")
+    user = await create_user(db, email="tok@example.com", display_name="Tok")
+    dev = DeveloperAccount(user_id=user.id, organization_name="Org")
+    db.add(dev)
+    await db.flush()
+    client = OAuthClient(developer_account_id=dev.id, client_id="cid-tok", name="Tok")
+    db.add(client)
+    await db.flush()
+    parent = OAuthToken(
+        client_id=client.id,
+        user_id=user.id,
+        event_id=doomed.id,
+        access_token_hash=generate_token(),
+        expires_at=utc_now() + timedelta(hours=1),
+    )
+    db.add(parent)
+    await db.flush()
+    child = OAuthToken(
+        client_id=client.id,
+        user_id=user.id,
+        event_id=keep.id,
+        access_token_hash=generate_token(),
+        parent_token_id=parent.id,
+        expires_at=utc_now() + timedelta(hours=1),
+    )
+    db.add(child)
+    await db.flush()
+    child_id = child.id
+
+    assert await delete_event(db, doomed.id) is True
+    fresh = (await db.execute(sa.select(OAuthToken).where(OAuthToken.id == child_id))).scalars().first()
+    assert fresh is not None, "the surviving event's token must not be deleted"
+    assert fresh.parent_token_id is None
+
+
+@pytest.mark.anyio
 async def test_delete_event_leaves_another_events_rows_alone(db: AsyncSession):
     """A subquery reading the wrong column would purge every event, not just this one."""
     keep = await _seed_event_with_every_scoped_row(db, "keep")
