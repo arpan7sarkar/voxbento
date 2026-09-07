@@ -573,16 +573,22 @@ class TestBoothCRUD:
             list_booths_for_room,
         )
 
-        event, room, relay_booth = seed_event
+        # seed_event's booth is where the interpreter sits, so the relay booth is created
+        # after it and holds the highest booth id. Deleting the highest id is what frees it
+        # for reuse; deleting a lower one leaves max() untouched and proves nothing.
+        event, room, own = seed_event
         async with get_session() as s:
-            own = await create_booth(s, event_id=event.id, room_id=room.id, language_code="de", language_name="German")
+            relay_booth = await create_booth(
+                s, event_id=event.id, room_id=room.id, language_code="es", language_name="Spanish"
+            )
             other_room = await create_room(s, event_id=event.id, display_name="Hall B")
-            own_id, other_room_id = own.id, other_room.id
+            own_id, other_room_id, relay_id = own.id, other_room.id, relay_booth.id
+        assert relay_id > own_id
 
         async with _client() as c:
             await c.post(
                 f"/admin/events/{event.id}/rooms/{room.id}/edit",
-                data={"form_section": "relay", "relay_booth_id": str(relay_booth.id)},
+                data={"form_section": "relay", "relay_booth_id": str(relay_id)},
                 cookies=admin_cookie,
                 follow_redirects=False,
             )
@@ -592,16 +598,16 @@ class TestBoothCRUD:
                 role="interpreter",
                 event_slug=event.slug,
                 room_id=room.id,
-                language_code="de",
+                language_code="en",
             )
         }
         async with _client() as c:
-            page = await c.get(f"/interpreter/{event.slug}/{room.id}/de", cookies=session_cookie)
+            page = await c.get(f"/interpreter/{event.slug}/{room.id}/en", cookies=session_cookie)
         assert resolve_relay_attr(page.text) != "", "relay was never configured, so nothing is proven"
 
         async with _client() as c:
             resp = await c.post(
-                f"/admin/events/{event.id}/rooms/{room.id}/booths/{relay_booth.id}/delete",
+                f"/admin/events/{event.id}/rooms/{room.id}/booths/{relay_id}/delete",
                 cookies=admin_cookie,
                 follow_redirects=False,
             )
@@ -616,9 +622,12 @@ class TestBoothCRUD:
         async with get_session() as s:
             new_booth = (await list_booths_for_room(s, other_room_id))[0]
             assert (await get_room_by_id(s, room.id)).relay_booth_id is None
+        # without this the replacement never occupies the freed id and the stale-pointer
+        # path is not exercised at all
+        assert new_booth.id == relay_id, f"no rowid reuse: {new_booth.id} != {relay_id}"
 
         async with _client() as c:
-            page = await c.get(f"/interpreter/{event.slug}/{room.id}/de", cookies=session_cookie)
+            page = await c.get(f"/interpreter/{event.slug}/{room.id}/en", cookies=session_cookie)
         after = resolve_relay_attr(page.text)
         assert f"/{other_room_id}/{new_booth.language_code}/" not in after, after
         assert not after.startswith("http"), f"still handed a relay stream: {after}"
