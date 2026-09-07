@@ -140,3 +140,21 @@ class TestListenerRateLimit:
 
             resp = await c.get(f"/listener/{event.slug}/rooms/{room.id}/audio-delay?code=WRONGCODE")
             assert resp.status_code == 429
+
+    @pytest.mark.anyio
+    async def test_viewing_the_join_page_is_not_a_failed_attempt(self, seed_event):
+        """Attendees sharing one venue IP open the bare link before typing a code."""
+        event, _ = seed_event
+        async with _client() as c:
+            for attendee in range(1, 16):
+                resp = await c.get(f"/listener/{event.slug}")
+                assert resp.status_code == 200, f"attendee {attendee} was locked out"
+                assert b"Invalid join code." not in resp.content
+
+    @pytest.mark.anyio
+    async def test_audio_delay_poll_without_code_is_not_a_failed_attempt(self, seed_event):
+        event, room = seed_event
+        async with _client() as c:
+            for _ in range(15):
+                resp = await c.get(f"/listener/{event.slug}/rooms/{room.id}/audio-delay")
+                assert resp.status_code == 403

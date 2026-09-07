@@ -83,7 +83,7 @@ async def listen_event_page(request: Request, event_slug: str, code: str | None 
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
 
         if not has_listener_access(request, event_slug, ev.listener_join_code, code):
-            if _register_failed_attempt(_client_ip(request)):
+            if code and _register_failed_attempt(_client_ip(request)):
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail="Too many join attempts. Please try again later.",
@@ -181,7 +181,7 @@ async def listener_room_audio_delay(
         if not ev:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
         if not has_listener_access(request, event_slug, ev.listener_join_code, code):
-            if _register_failed_attempt(_client_ip(request)):
+            if code and _register_failed_attempt(_client_ip(request)):
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail="Too many join attempts. Please try again later.",
