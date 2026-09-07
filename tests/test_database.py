@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # We import CRUD helpers and test them against our isolated test DB.
@@ -38,7 +39,17 @@ from portal.database import (
     list_users,
     redeem_invite_token,
 )
-from portal.models import Base, DBBooth, Event, InviteToken, Room, generate_token, utc_now
+from portal.models import (
+    Base,
+    DBBooth,
+    Event,
+    InviteToken,
+    Room,
+    TranscriptSegment,
+    TranscriptTranslation,
+    generate_token,
+    utc_now,
+)
 from portal.roles import ALL_ROLES
 
 # ---------------------------------------------------------------------------
@@ -897,6 +908,66 @@ async def test_delete_event_clears_a_cross_event_relay_pointer(db: AsyncSession)
     fresh = await get_room_by_id(db, survivor_room.id)
     assert fresh is not None, "the surviving event's room must not be deleted"
     assert fresh.relay_booth_id is None
+
+
+@pytest.mark.anyio
+async def test_delete_event_removes_a_segment_reached_only_by_its_booth(db: AsyncSession):
+    """transcript_segments reaches the event by room_id AND booth_id, and they can differ.
+
+    admin_create_booth takes both ids from the URL without checking that the room belongs
+    to the event, so a booth owned here can sit in another event's room. Predicating on
+    room_id alone leaves the segment pointing at a booth id SQLite is free to reuse.
+    """
+    other = await create_event(db, slug="ev-seg-other", display_name="Other")
+    other_room = await create_room(db, event_id=other.id, display_name="Other Hall")
+    ev = await create_event(db, slug="ev-seg-owner", display_name="Owner")
+    # booth owned by ev, sitting in the other event's room
+    booth = await create_booth(db, event_id=ev.id, room_id=other_room.id, language_code="en", language_name="English")
+    seg = TranscriptSegment(room_id=other_room.id, booth_id=booth.id, language_code="en", text="cross")
+    db.add(seg)
+    await db.flush()
+    seg_id = seg.id
+
+    assert await delete_event(db, ev.id) is True
+    assert await get_booth_by_id(db, booth.id) is None
+    assert (
+        await db.execute(sa.select(TranscriptSegment).where(TranscriptSegment.id == seg_id))
+    ).scalars().first() is None
+    # the other event's room is untouched
+    assert await get_room_by_id(db, other_room.id) is not None
+
+
+@pytest.mark.anyio
+async def test_delete_room_removes_its_transcripts_and_memberships(db: AsyncSession):
+    """Anything delete_room strands can never be reached again.
+
+    delete_event only finds these rows through the event's rooms, so a row left behind
+    here outlives the event too, holding a room_id SQLite can hand out again.
+    """
+    from portal.database import create_user
+    from portal.models import RoomMembership
+
+    ev = await create_event(db, slug="ev-room-purge", display_name="Ev")
+    room = await create_room(db, event_id=ev.id, display_name="Hall")
+    booth = await create_booth(db, event_id=ev.id, room_id=room.id, language_code="en", language_name="English")
+    user = await create_user(db, email="rp@example.com", display_name="RP")
+    db.add(RoomMembership(user_id=user.id, room_id=room.id, role="room_coordinator"))
+    seg = TranscriptSegment(room_id=room.id, booth_id=booth.id, language_code="en", text="hi")
+    db.add(seg)
+    await db.flush()
+    db.add(TranscriptTranslation(segment_id=seg.id, language_code="es", text="hola"))
+    await db.flush()
+    room_id, seg_id = room.id, seg.id
+
+    assert await delete_room(db, room_id) is True
+    left_seg = (await db.execute(sa.select(TranscriptSegment).where(TranscriptSegment.id == seg_id))).scalars().all()
+    left_tr = (
+        (await db.execute(sa.select(TranscriptTranslation).where(TranscriptTranslation.segment_id == seg_id)))
+        .scalars()
+        .all()
+    )
+    left_rm = (await db.execute(sa.select(RoomMembership).where(RoomMembership.room_id == room_id))).scalars().all()
+    assert (left_seg, left_tr, left_rm) == ([], [], [])
 
 
 @pytest.mark.anyio
