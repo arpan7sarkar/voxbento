@@ -158,3 +158,16 @@ class TestListenerRateLimit:
             for _ in range(15):
                 resp = await c.get(f"/listener/{event.slug}/rooms/{room.id}/audio-delay")
                 assert resp.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_cookie_supplied_wrong_codes_are_throttled(self, seed_event):
+        """A guess sent through the listener_code_ cookie is a submission too."""
+        event, _ = seed_event
+        async with _client() as c:
+            c.cookies.set(f"listener_code_{event.slug}", "WRONGCODE")
+            for _ in range(10):
+                resp = await c.get(f"/listener/{event.slug}")
+                assert resp.status_code == 200
+
+            resp = await c.get(f"/listener/{event.slug}")
+            assert resp.status_code == 429
