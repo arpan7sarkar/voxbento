@@ -264,6 +264,29 @@ class TestEventCRUD:
         assert b"testcon" not in resp.content
 
     @pytest.mark.anyio
+    async def test_delete_event_with_a_relay_booth(self, admin_cookie, seed_event):
+        """Relay Settings sets rooms.relay_booth_id; the event must still be deletable."""
+        event, room, booth = seed_event
+        async with _client() as c:
+            resp = await c.post(
+                f"/admin/events/{event.id}/rooms/{room.id}/edit",
+                data={"form_section": "relay", "relay_booth_id": str(booth.id)},
+                cookies=admin_cookie,
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            resp = await c.post(
+                f"/admin/events/{event.id}/delete",
+                cookies=admin_cookie,
+                follow_redirects=False,
+            )
+        assert resp.status_code == 303
+        async with _client() as c:
+            resp = await c.get("/admin/events/", cookies=admin_cookie)
+        assert b"testcon" not in resp.content
+
+    @pytest.mark.anyio
     async def test_event_not_found(self, admin_cookie):
         async with _client() as c:
             resp = await c.get("/admin/events/99999/", cookies=admin_cookie)

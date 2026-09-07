@@ -174,6 +174,12 @@ async def delete_event(session: AsyncSession, event_id: int) -> bool:
     ev = await get_event_by_id(session, event_id)
     if ev is None:
         return False
+    # Break the circular FK cycle: rooms.relay_booth_id → booths.id ↔ booths.room_id → rooms.id
+    # null out the back-references so the cascade can order the deletes
+    result = await session.execute(select(Room).where(Room.event_id == event_id))
+    for room in result.scalars().all():
+        room.relay_booth_id = None
+    await session.flush()
     await session.delete(ev)
     await session.flush()
     return True

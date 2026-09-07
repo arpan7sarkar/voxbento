@@ -157,6 +157,22 @@ async def test_delete_event(db: AsyncSession):
 
 
 @pytest.mark.anyio
+async def test_delete_event_with_a_relay_booth(db: AsyncSession):
+    """rooms.relay_booth_id points at a booth that points back at the room."""
+    ev = await create_event(db, slug="ev-relay-del", display_name="Ev")
+    room = await create_room(db, event_id=ev.id, display_name="Room")
+    booth = await create_booth(
+        db, event_id=ev.id, room_id=room.id, language_code="en", language_name="English"
+    )
+    room.relay_booth_id = booth.id
+    await db.flush()
+
+    assert await delete_event(db, ev.id) is True
+    assert await get_event_by_id(db, ev.id) is None
+    assert await get_room_by_id(db, room.id) is None
+
+
+@pytest.mark.anyio
 async def test_delete_event_not_found(db: AsyncSession):
     assert await delete_event(db, 99999) is False
 
