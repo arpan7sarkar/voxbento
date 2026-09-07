@@ -37,9 +37,14 @@ from portal.models import (
     EventAPIKey,
     EventMembership,
     InviteToken,
+    OAuthAuditLog,
+    OAuthAuthorizationCode,
+    OAuthConsentGrant,
+    OAuthToken,
     Room,
     RoomMembership,
     TranscriptSegment,
+    TranscriptTranslation,
     UsageMetric,
     User,
     generate_token,
@@ -174,12 +179,38 @@ async def delete_event(session: AsyncSession, event_id: int) -> bool:
     ev = await get_event_by_id(session, event_id)
     if ev is None:
         return False
-    # Break the circular FK cycle: rooms.relay_booth_id → booths.id ↔ booths.room_id → rooms.id
-    # assign the relationship, not the column, so an already-loaded relay_booth is
-    # cleared too and the unit of work no longer sees the Room ↔ DBBooth dependency
-    result = await session.execute(select(Room).where(Room.event_id == event_id))
-    for room in result.scalars().all():
+    # SQLite FKs are OFF, so the ondelete= declarations never fire and only children
+    # reachable through an ORM cascade go. Clear the rest explicitly, as delete_room does.
+    room_ids = select(Room.id).where(Room.event_id == event_id)
+    booth_ids = select(DBBooth.id).where(DBBooth.event_id == event_id)
+    segment_ids = select(TranscriptSegment.id).where(TranscriptSegment.room_id.in_(room_ids))
+    token_ids = select(OAuthToken.id).where(OAuthToken.event_id == event_id)
+
+    # Break the rooms.relay_booth_id -> booths.id <-> booths.room_id -> rooms.id cycle.
+    # Scope by booth, not by the room's event: admin_edit_room assigns relay_booth_id
+    # straight from the form, so a room in another event can point at one of these booths.
+    # Assign the relationship rather than the column, or an already-loaded relay_booth
+    # keeps the cycle and the unit of work raises CircularDependencyError.
+    relaying = await session.execute(select(Room).where(Room.relay_booth_id.in_(booth_ids)))
+    for room in relaying.scalars().all():
         room.relay_booth = None
+    await session.flush()
+
+    # oauth_audit_logs is the exception: every foreign key on it is SET NULL and nullable,
+    # so the trail is meant to outlive what it refers to. Null the references rather than
+    # delete the rows, and do it while the tokens still exist so the subquery matches.
+    await session.execute(sa.update(OAuthAuditLog).where(OAuthAuditLog.token_id.in_(token_ids)).values(token_id=None))
+    await session.execute(sa.update(OAuthAuditLog).where(OAuthAuditLog.event_id == event_id).values(event_id=None))
+
+    await session.execute(sa.delete(TranscriptTranslation).where(TranscriptTranslation.segment_id.in_(segment_ids)))
+    await session.execute(sa.delete(TranscriptSegment).where(TranscriptSegment.room_id.in_(room_ids)))
+    await session.execute(sa.delete(RoomMembership).where(RoomMembership.room_id.in_(room_ids)))
+    await session.execute(sa.delete(EventMembership).where(EventMembership.event_id == event_id))
+    await session.execute(sa.delete(OAuthAuthorizationCode).where(OAuthAuthorizationCode.event_id == event_id))
+    await session.execute(sa.delete(OAuthConsentGrant).where(OAuthConsentGrant.event_id == event_id))
+    await session.execute(sa.delete(OAuthToken).where(OAuthToken.event_id == event_id))
+    await session.flush()
+
     await session.delete(ev)
     await session.flush()
     return True
