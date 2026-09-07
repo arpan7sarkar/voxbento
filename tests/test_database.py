@@ -165,11 +165,17 @@ async def test_delete_event_with_a_relay_booth(db: AsyncSession):
         db, event_id=ev.id, room_id=room.id, language_code="en", language_name="English"
     )
     room.relay_booth_id = booth.id
+    db.add(InviteToken(booth_id=booth.id, token=generate_token(), role="interpreter"))
     await db.flush()
+
+    assert len(await list_booths_for_room(db, room.id)) == 1
+    assert len(await list_tokens_for_booth(db, booth.id)) == 1
 
     assert await delete_event(db, ev.id) is True
     assert await get_event_by_id(db, ev.id) is None
     assert await get_room_by_id(db, room.id) is None
+    assert await list_booths_for_room(db, room.id) == []
+    assert await list_tokens_for_booth(db, booth.id) == []
 
 
 @pytest.mark.anyio

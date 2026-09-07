@@ -276,6 +276,14 @@ class TestEventCRUD:
             )
             assert resp.status_code == 303
 
+        # 303 alone does not prove the relay was stored, and without it stored
+        # this test would delete an ordinary event and miss the FK cycle.
+        from portal.database import get_room_by_id, get_session
+
+        async with get_session() as s:
+            assert (await get_room_by_id(s, room.id)).relay_booth_id == booth.id
+
+        async with _client() as c:
             resp = await c.post(
                 f"/admin/events/{event.id}/delete",
                 cookies=admin_cookie,
