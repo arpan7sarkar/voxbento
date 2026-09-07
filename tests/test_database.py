@@ -168,9 +168,7 @@ async def test_delete_event_with_a_relay_booth(db: AsyncSession):
     rooms = []
     for code, name in (("en", "English"), ("es", "Spanish"), ("fr", "French")):
         room = await create_room(db, event_id=ev.id, display_name=f"Room {code}")
-        booth = await create_booth(
-            db, event_id=ev.id, room_id=room.id, language_code=code, language_name=name
-        )
+        booth = await create_booth(db, event_id=ev.id, room_id=room.id, language_code=code, language_name=name)
         room.relay_booth_id = booth.id
         db.add(InviteToken(booth_id=booth.id, token=generate_token(), role="interpreter"))
         rooms.append((room, booth))
@@ -198,15 +196,11 @@ async def test_delete_event_with_a_relay_booth_already_loaded(db: AsyncSession):
 
     ev = await create_event(db, slug="ev-relay-loaded", display_name="Ev")
     room = await create_room(db, event_id=ev.id, display_name="Room")
-    booth = await create_booth(
-        db, event_id=ev.id, room_id=room.id, language_code="en", language_name="English"
-    )
+    booth = await create_booth(db, event_id=ev.id, room_id=room.id, language_code="en", language_name="English")
     room.relay_booth_id = booth.id
     await db.flush()
 
-    loaded = await db.execute(
-        sa_select(Room).where(Room.id == room.id).options(joinedload(Room.relay_booth))
-    )
+    loaded = await db.execute(sa_select(Room).where(Room.id == room.id).options(joinedload(Room.relay_booth)))
     assert loaded.scalars().first().relay_booth is not None
 
     assert await delete_event(db, ev.id) is True
