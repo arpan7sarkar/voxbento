@@ -32,6 +32,7 @@ from portal.models import (
     AuthToken,
     Base,
     BoothMembership,
+    BoothTranslationLanguage,
     DBBooth,
     Event,
     EventAPIKey,
@@ -214,6 +215,12 @@ async def delete_event(session: AsyncSession, event_id: int) -> bool:
     await session.execute(sa.delete(EventMembership).where(EventMembership.event_id == event_id))
     await session.execute(sa.delete(OAuthAuthorizationCode).where(OAuthAuthorizationCode.event_id == event_id))
     await session.execute(sa.delete(OAuthConsentGrant).where(OAuthConsentGrant.event_id == event_id))
+    # No current path builds a refresh chain across events (oauth.py copies event_id into
+    # the rotated token), but nothing in the schema forbids one, so do not let that
+    # invariant live in another file.
+    await session.execute(
+        sa.update(OAuthToken).where(OAuthToken.parent_token_id.in_(token_ids)).values(parent_token_id=None)
+    )
     await session.execute(sa.delete(OAuthToken).where(OAuthToken.event_id == event_id))
     await session.flush()
 
@@ -280,8 +287,10 @@ async def delete_room(session: AsyncSession, room_id: int) -> bool:
     if room is None:
         return False
     # Break the circular FK cycle: rooms.relay_booth_id → booths.id ↔ booths.room_id → rooms.id
-    # null out relay_booth_id to remove the back-reference
-    room.relay_booth_id = None
+    # Assign the relationship, not the column, so a Room already in the identity map
+    # drops the edge too. Other rooms can relay from this room's booths, so clear those
+    # as well or they point at booths that are about to go.
+    room.relay_booth = None
     await session.flush()
     # delete all booths belonging to this room explicitly
     from sqlalchemy import delete as sa_delete
@@ -289,8 +298,15 @@ async def delete_room(session: AsyncSession, room_id: int) -> bool:
 
     # First delete booth memberships and tokens to avoid orphans since SQLite FKs are OFF
     booth_ids = sa_select(DBBooth.id).where(DBBooth.room_id == room_id)
+    relaying = await session.execute(select(Room).where(Room.relay_booth_id.in_(booth_ids)))
+    for other in relaying.scalars().all():
+        other.relay_booth = None
+    await session.flush()
     await session.execute(sa_delete(BoothMembership).where(BoothMembership.booth_id.in_(booth_ids)))
     await session.execute(sa_delete(InviteToken).where(InviteToken.booth_id.in_(booth_ids)))
+    # sa_delete(DBBooth) below is a Core bulk delete, so the ORM cascade on
+    # DBBooth.translation_languages never runs and these rows would outlive the booths.
+    await session.execute(sa_delete(BoothTranslationLanguage).where(BoothTranslationLanguage.booth_id.in_(booth_ids)))
     # Transcripts and room memberships too, or they outlive the room holding a freed
     # room_id. delete_event only reaches these through the event's rooms, so anything
     # stranded here can never be cleaned up later.
