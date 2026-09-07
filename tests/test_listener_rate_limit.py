@@ -3,7 +3,9 @@
 Covers:
 - Repeated bad join codes from one client get throttled with 429
 - A valid join code succeeds and is not throttled
-- A client holding a valid session cookie is never throttled
+- A client holding a valid session cookie reaches the listener page and is never throttled
+- Viewing the join page, and polling for the room audio delay, are not join-code attempts
+- A wrong code submitted through the listener_code_ cookie is still throttled
 """
 
 from __future__ import annotations
@@ -119,6 +121,10 @@ class TestListenerRateLimit:
                 resp = await c.get(f"/listener/{event.slug}")
                 assert resp.status_code == 200
                 assert b"Invalid join code." not in resp.content
+                # A cookie-less visitor also gets 200 now, so assert the cookie
+                # actually grants access instead of just dodging the throttle.
+                assert b"Enter the join code" not in resp.content
+                assert b"-- Select Source Audio --" in resp.content
 
     @pytest.mark.anyio
     async def test_different_clients_are_throttled_independently(self, seed_event):
@@ -171,3 +177,14 @@ class TestListenerRateLimit:
 
             resp = await c.get(f"/listener/{event.slug}")
             assert resp.status_code == 429
+
+    @pytest.mark.anyio
+    async def test_cookie_holder_can_poll_audio_delay(self, seed_event):
+        """listener-event.js polls this every 3s for the whole session, with no ?code=."""
+        event, room = seed_event
+        async with _client() as c:
+            await c.get(f"/listener/{event.slug}?code=ROOM42")
+            for _ in range(15):
+                resp = await c.get(f"/listener/{event.slug}/rooms/{room.id}/audio-delay")
+                assert resp.status_code == 200
+                assert resp.json() == {"audio_delay_ms": 0}
