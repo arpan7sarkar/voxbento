@@ -175,11 +175,11 @@ async def delete_event(session: AsyncSession, event_id: int) -> bool:
     if ev is None:
         return False
     # Break the circular FK cycle: rooms.relay_booth_id → booths.id ↔ booths.room_id → rooms.id
-    # null out the back-references so the cascade can order the deletes
+    # assign the relationship, not the column, so an already-loaded relay_booth is
+    # cleared too and the unit of work no longer sees the Room ↔ DBBooth dependency
     result = await session.execute(select(Room).where(Room.event_id == event_id))
     for room in result.scalars().all():
-        room.relay_booth_id = None
-    await session.flush()
+        room.relay_booth = None
     await session.delete(ev)
     await session.flush()
     return True
