@@ -113,13 +113,16 @@ async def register_submit(request: Request):
     form = await request.form()
     email = form.get("email", "").strip().lower()
     display_name = form.get("display_name", "").strip()
-    password = form.get("password", "").strip()
+    password_raw = form.get("password", "")
+    password = password_raw.strip()
 
     errors = []
     if not email or "@" not in email:
         errors.append("Valid email is required.")
     if not display_name:
         errors.append("Display name is required.")
+    if password_raw and not password:
+        errors.append("Password cannot be blank or only whitespace.")
 
     if not errors:
         async with get_session() as session:
@@ -199,7 +202,9 @@ async def user_login_page(request: Request, next: str = ""):
 async def user_login_submit(request: Request):
     form = await request.form()
     email = form.get("email", "").strip().lower()
-    password = form.get("password", "").strip()
+    # Not stripped here: verify_password() normalizes it, but also needs the
+    # raw value as a fallback for hashes created before whitespace-trimming.
+    password = form.get("password", "")
     next_url = form.get("next_url", "")
 
     if not check_rate_limit("login", email, max_requests=10, window_seconds=3600):
@@ -460,7 +465,9 @@ async def set_password_api(request: Request):
 async def remove_password_api(request: Request):
     user_token = await require_user(request)
     data = await request.json()
-    password = data.get("password", "").strip()
+    # Not stripped here: verify_password() normalizes it, but also needs the
+    # raw value as a fallback for hashes created before whitespace-trimming.
+    password = data.get("password", "")
 
     async with get_session() as session:
         user = await get_user_by_id(session, int(user_token["sub"]))
