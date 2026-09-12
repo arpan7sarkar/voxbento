@@ -240,8 +240,8 @@ async def admin_login_page(request: Request):
 @router.post("/admin/login")
 async def admin_login_submit(request: Request):
     form = await request.form()
-    password = form.get("password", "")
-    if not settings.admin_password or password != settings.admin_password:
+    password = form.get("password", "").strip()
+    if not settings.admin_password or password != settings.admin_password.strip():
         return templates.TemplateResponse(
             request=request,
             name="admin/login.html",

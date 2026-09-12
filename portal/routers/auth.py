@@ -113,7 +113,7 @@ async def register_submit(request: Request):
     form = await request.form()
     email = form.get("email", "").strip().lower()
     display_name = form.get("display_name", "").strip()
-    password = form.get("password", "")
+    password = form.get("password", "").strip()
 
     errors = []
     if not email or "@" not in email:
@@ -199,7 +199,7 @@ async def user_login_page(request: Request, next: str = ""):
 async def user_login_submit(request: Request):
     form = await request.form()
     email = form.get("email", "").strip().lower()
-    password = form.get("password", "")
+    password = form.get("password", "").strip()
     next_url = form.get("next_url", "")
 
     if not check_rate_limit("login", email, max_requests=10, window_seconds=3600):
@@ -343,7 +343,7 @@ async def reset_password_page(request: Request, token: str):
 @router.post("/auth/reset/{token}")
 async def reset_password_submit(request: Request, token: str):
     form = await request.form()
-    password = form.get("password", "")
+    password = form.get("password", "").strip()
 
     if len(password) < 8:
         return templates.TemplateResponse(
@@ -444,7 +444,7 @@ async def account_page(request: Request):
 async def set_password_api(request: Request):
     user_token = await require_user(request)
     data = await request.json()
-    password = data.get("password", "")
+    password = data.get("password", "").strip()
 
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
@@ -460,7 +460,7 @@ async def set_password_api(request: Request):
 async def remove_password_api(request: Request):
     user_token = await require_user(request)
     data = await request.json()
-    password = data.get("password", "")
+    password = data.get("password", "").strip()
 
     async with get_session() as session:
         user = await get_user_by_id(session, int(user_token["sub"]))

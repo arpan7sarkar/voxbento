@@ -20,11 +20,11 @@ security = HTTPBearer(auto_error=False)
 
 
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(password.strip().encode(), bcrypt.gensalt()).decode()
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    return bcrypt.checkpw(password.encode(), password_hash.encode())
+    return bcrypt.checkpw(password.strip().encode(), password_hash.encode())
 
 
 def create_token() -> str:

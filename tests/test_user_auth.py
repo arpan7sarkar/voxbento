@@ -66,6 +66,11 @@ class TestPasswordHashing:
         hashed = hash_password("correct")
         assert not verify_password("wrong", hashed)
 
+    @pytest.mark.anyio
+    async def test_verify_ignores_surrounding_whitespace(self, setup_db):
+        hashed = hash_password("securepass123")
+        assert verify_password(" securepass123\n", hashed)
+
 
 # ---------------------------------------------------------------------------
 # Registration
@@ -160,6 +165,21 @@ class TestUserLogin:
         assert resp.status_code == 303
         assert resp.headers["location"] == "/account"
         assert "user_token" in resp.headers.get("set-cookie", "")
+
+    @pytest.mark.anyio
+    async def test_login_strips_surrounding_whitespace(self, setup_db):
+        await _create_test_user(email="login-ws@example.com", password="securepass123")
+        async with _client() as c:
+            resp = await c.post(
+                "/login",
+                data={
+                    "email": "login-ws@example.com",
+                    "password": " securepass123\n",
+                },
+                follow_redirects=False,
+            )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/account"
 
     @pytest.mark.anyio
     async def test_login_with_wrong_password(self, setup_db):
