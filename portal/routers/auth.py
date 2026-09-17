@@ -130,7 +130,7 @@ async def register_submit(request: Request):
             if existing:
                 errors.append("An account with this email already exists.")
             else:
-                pw_hash = hash_password(password) if password else None
+                pw_hash = hash_password(password_raw) if password else None
                 user = await create_user(
                     session,
                     email=email,
@@ -202,8 +202,6 @@ async def user_login_page(request: Request, next: str = ""):
 async def user_login_submit(request: Request):
     form = await request.form()
     email = form.get("email", "").strip().lower()
-    # Not stripped here: verify_password() normalizes it, but also needs the
-    # raw value as a fallback for hashes created before whitespace-trimming.
     password = form.get("password", "")
     next_url = form.get("next_url", "")
 
@@ -348,7 +346,7 @@ async def reset_password_page(request: Request, token: str):
 @router.post("/auth/reset/{token}")
 async def reset_password_submit(request: Request, token: str):
     form = await request.form()
-    password = form.get("password", "").strip()
+    password = form.get("password", "")
 
     if len(password) < 8:
         return templates.TemplateResponse(
@@ -449,7 +447,7 @@ async def account_page(request: Request):
 async def set_password_api(request: Request):
     user_token = await require_user(request)
     data = await request.json()
-    password = data.get("password", "").strip()
+    password = data.get("password", "")
 
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
@@ -465,8 +463,6 @@ async def set_password_api(request: Request):
 async def remove_password_api(request: Request):
     user_token = await require_user(request)
     data = await request.json()
-    # Not stripped here: verify_password() normalizes it, but also needs the
-    # raw value as a fallback for hashes created before whitespace-trimming.
     password = data.get("password", "")
 
     async with get_session() as session:
