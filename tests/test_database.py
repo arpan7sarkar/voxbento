@@ -61,6 +61,13 @@ from portal.roles import ALL_ROLES
 async def db():
     """Yield an async session backed by an in-memory SQLite database."""
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
+
+    @sa.event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -69,8 +76,10 @@ async def db():
         async with session.begin():
             yield session
 
-    async with engine.begin() as conn:
+    async with engine.connect() as conn:
+        await conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
         await conn.run_sync(Base.metadata.drop_all)
+        await conn.commit()
     await engine.dispose()
 
 
@@ -817,10 +826,10 @@ async def _scoped_row_counts(db: AsyncSession, ids: dict) -> dict[str, int]:
 
 @pytest.mark.anyio
 async def test_delete_event_removes_every_scoped_row(db: AsyncSession):
-    """PRAGMA foreign_keys is 0, so ondelete= never fires and only ORM cascades run.
+    """Everything scoped to the event goes with it.
 
-    Everything scoped to the event must still go, or the rows outlive it and a reused
-    id later resolves them against unrelated data.
+    A row that outlives the event holds an id SQLite can reuse, and later resolves
+    against unrelated data.
     """
     ids = await _seed_event_with_every_scoped_row(db, "purge")
     before = await _scoped_row_counts(db, ids)
@@ -915,8 +924,8 @@ async def test_delete_event_removes_a_segment_reached_only_by_its_booth(db: Asyn
     """transcript_segments reaches the event by room_id AND booth_id, and they can differ.
 
     admin_create_booth takes both ids from the URL without checking that the room belongs
-    to the event, so a booth owned here can sit in another event's room. Predicating on
-    room_id alone leaves the segment pointing at a booth id SQLite is free to reuse.
+    to the event, so a booth owned here can sit in another event's room. Its segments must
+    not keep a booth id SQLite is free to reuse.
     """
     other = await create_event(db, slug="ev-seg-other", display_name="Other")
     other_room = await create_room(db, event_id=other.id, display_name="Other Hall")
@@ -941,8 +950,8 @@ async def test_delete_event_removes_a_segment_reached_only_by_its_booth(db: Asyn
 async def test_delete_room_removes_its_transcripts_and_memberships(db: AsyncSession):
     """Anything delete_room strands can never be reached again.
 
-    delete_event only finds these rows through the event's rooms, so a row left behind
-    here outlives the event too, holding a room_id SQLite can hand out again.
+    A row left behind here outlives the event too, holding a room_id SQLite can hand out
+    again.
     """
     from portal.database import create_user
     from portal.models import RoomMembership
@@ -1008,7 +1017,7 @@ async def test_delete_room_clears_another_rooms_relay_pointer(db: AsyncSession):
 
 @pytest.mark.anyio
 async def test_delete_event_clears_a_cross_event_parent_token(db: AsyncSession):
-    """oauth_tokens.parent_token_id is SET NULL, which SQLite never enforces.
+    """oauth_tokens.parent_token_id is SET NULL, so a surviving child loses its parent.
 
     No current path builds a chain across events, so this guards the invariant rather
     than a reachable bug.
@@ -1049,12 +1058,13 @@ async def test_delete_event_clears_a_cross_event_parent_token(db: AsyncSession):
     assert await delete_event(db, doomed.id) is True
     fresh = (await db.execute(sa.select(OAuthToken).where(OAuthToken.id == child_id))).scalars().first()
     assert fresh is not None, "the surviving event's token must not be deleted"
+    await db.refresh(fresh)
     assert fresh.parent_token_id is None
 
 
 @pytest.mark.anyio
 async def test_delete_event_leaves_another_events_rows_alone(db: AsyncSession):
-    """A subquery reading the wrong column would purge every event, not just this one."""
+    """Deleting one event must not touch another event's rows."""
     keep = await _seed_event_with_every_scoped_row(db, "keep")
     drop = await _seed_event_with_every_scoped_row(db, "drop")
     assert keep["event"] != drop["event"]
