@@ -402,6 +402,15 @@ async def delete_booth(session: AsyncSession, booth_id: int) -> bool:
     booth = await get_booth_by_id(session, booth_id)
     if booth is None:
         return False
+    # rooms.relay_booth_id declares ondelete="SET NULL" and SQLite runs with FKs ON, so
+    # the database clears the row itself. Clear it here too, and assign the relationship
+    # rather than the column: a Room already loaded in this session otherwise keeps
+    # resolving relay_booth to the booth just deleted, and a read later in the same
+    # request would build a relay URL from it.
+    result = await session.execute(select(Room).where(Room.relay_booth_id == booth_id))
+    for room in result.scalars().all():
+        room.relay_booth = None
+    await session.flush()
     await session.delete(booth)
     await session.flush()
     return True
@@ -543,12 +552,13 @@ async def list_users(
         stmt = stmt.where(or_(User.email.ilike(f"%{search}%"), User.display_name.ilike(f"%{search}%")))
 
     sort_column = getattr(User, sort_by, User.created_at)
+    # Tie-break on id so rows sharing a sort value keep a stable order across pages.
     if sort_order == "desc":
-        sort_column = sort_column.desc()
+        order_by = (sort_column.desc(), User.id.desc())
     else:
-        sort_column = sort_column.asc()
+        order_by = (sort_column.asc(), User.id.asc())
 
-    stmt = stmt.order_by(sort_column).limit(limit).offset(offset)
+    stmt = stmt.order_by(*order_by).limit(limit).offset(offset)
 
     result = await session.execute(stmt)
     return list(result.scalars().all())
