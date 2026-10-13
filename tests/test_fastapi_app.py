@@ -1975,6 +1975,15 @@ def test_embed_keeps_its_own_frame_policy(monkeypatch):
     assert res.headers["x-content-type-options"] == "nosniff"
 
 
+def test_embed_error_keeps_embed_frame_policy(monkeypatch):
+    from portal.config import settings
+
+    monkeypatch.setattr(settings, "embed_allowed_origins", "https://eventyay.com")
+    res = client.get("/embed/test-event/en?token=invalid", headers={"accept": "text/html"})
+    assert res.status_code == 403
+    assert res.headers["content-security-policy"] == "frame-ancestors https://eventyay.com"
+
+
 def test_embed_headless_mode_config():
     """When headless=true, the config payload should contain headless: true and the class should be added."""
     _seed_embed_event("test-event", "en")
