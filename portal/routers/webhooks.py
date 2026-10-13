@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
+import os
 import secrets
 import socket
 import urllib.parse
@@ -33,29 +35,41 @@ class WebhookResponse(BaseModel):
     secret_key: str | None = None
 
 
-def validate_ssrf(url: str) -> None:
-    import os
+_DEV_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
-    if os.getenv("ENVIRONMENT") == "development":
-        if "localhost" in url or "127.0.0.1" in url:
-            return
 
+def _is_forbidden_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return not ip.is_global or ip.is_multicast
+
+
+async def validate_ssrf(url: str) -> list[str] | None:
+    """Resolve every A and AAAA record of a webhook URL and return the vetted IPs.
+
+    Delivery must connect to one of the returned IPs rather than resolving the
+    name again, otherwise a DNS answer that changes after this check (rebinding)
+    reaches internal services. Returns None for the development localhost bypass.
+    """
     try:
         parsed = urllib.parse.urlparse(url)
+        hostname = parsed.hostname
+        if os.getenv("ENVIRONMENT") == "development" and hostname in _DEV_LOCAL_HOSTS:
+            return None
+
         if parsed.scheme != "https":
             raise ValueError("Webhook URLs must use HTTPS.")
-
-        hostname = parsed.hostname
         if not hostname:
             raise ValueError("Invalid hostname.")
 
-        ip = socket.gethostbyname(hostname)
-        ip_obj = ipaddress.ip_address(ip)
-
-        if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_multicast:
-            raise ValueError(f"Webhook URL resolves to a forbidden internal IP address ({ip}).")
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid webhook URL: {str(e)}")
+        infos = await asyncio.get_running_loop().getaddrinfo(hostname, parsed.port or 443, type=socket.SOCK_STREAM)
+        ips = list(dict.fromkeys(info[4][0] for info in infos))
+        for ip in ips:
+            if _is_forbidden_ip(ipaddress.ip_address(ip)):
+                raise ValueError(f"Webhook URL resolves to a forbidden internal IP address ({ip}).")
+        return ips
+    except (ValueError, OSError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid webhook URL: {e}")
 
 
 @router.post("", response_model=WebhookResponse, status_code=status.HTTP_201_CREATED)
@@ -64,7 +78,7 @@ async def create_webhook(
     token: OAuthToken = Depends(require_oauth_scope("webhooks:manage")),
     db: AsyncSession = Depends(get_db_session),
 ):
-    validate_ssrf(data.target_url)
+    await validate_ssrf(data.target_url)
 
     if not data.event_types:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="event_types cannot be empty")

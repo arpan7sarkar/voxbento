@@ -9,6 +9,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
+from fastapi import HTTPException
 from sqlalchemy import select, update
 
 from portal.database import get_session
@@ -50,6 +51,25 @@ def sign_payload(secret: str, payload_str: str, timestamp: int) -> str:
     return mac.hexdigest()
 
 
+async def post_to_vetted_ip(
+    client: httpx.AsyncClient, target_url: str, vetted_ips: list[str] | None, content: str, headers: dict
+) -> httpx.Response:
+    """POST to the IPs vetted by validate_ssrf, keeping the original Host header and TLS hostname."""
+    if vetted_ips is None:
+        return await client.post(target_url, content=content, headers=headers)
+
+    url = httpx.URL(target_url)
+    headers = {**headers, "Host": url.netloc.decode("ascii")}
+    extensions = {"sni_hostname": url.raw_host.decode("ascii")}
+    last_error: httpx.ConnectError | None = None
+    for ip in vetted_ips:
+        try:
+            return await client.post(url.copy_with(host=ip), content=content, headers=headers, extensions=extensions)
+        except httpx.ConnectError as e:
+            last_error = e
+    raise last_error
+
+
 async def process_delivery(client: httpx.AsyncClient, db, delivery: WebhookDelivery) -> None:
     result = await db.execute(select(WebhookSubscription).where(WebhookSubscription.id == delivery.subscription_id))
     sub = result.scalars().first()
@@ -60,8 +80,8 @@ async def process_delivery(client: httpx.AsyncClient, db, delivery: WebhookDeliv
         return
 
     try:
-        validate_ssrf(sub.target_url)
-    except Exception as e:
+        vetted_ips = await validate_ssrf(sub.target_url)
+    except HTTPException as e:
         delivery.status = "dead"
         delivery.last_error = f"SSRF Validation failed at dispatch: {e}"
         return
@@ -83,7 +103,7 @@ async def process_delivery(client: httpx.AsyncClient, db, delivery: WebhookDeliv
     last_error = None
 
     try:
-        response = await client.post(sub.target_url, content=payload_str, headers=headers)
+        response = await post_to_vetted_ip(client, sub.target_url, vetted_ips, payload_str, headers)
         response.raise_for_status()
         success = True
     except httpx.RequestError as e:
@@ -130,7 +150,9 @@ async def process_delivery(client: httpx.AsyncClient, db, delivery: WebhookDeliv
 
 async def webhook_worker_loop():
     """Background polling worker for webhooks."""
-    async with httpx.AsyncClient(timeout=5.0) as client:
+    # Pooled connections are keyed by the pinned IP, so a TLS session verified for one
+    # webhook hostname must not be reused for another hostname on the same IP.
+    async with httpx.AsyncClient(timeout=5.0, limits=httpx.Limits(max_keepalive_connections=0)) as client:
         while True:
             try:
                 claimed = False
