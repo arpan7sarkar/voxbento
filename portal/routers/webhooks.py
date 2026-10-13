@@ -36,11 +36,15 @@ class WebhookResponse(BaseModel):
 
 
 _DEV_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_NAT64_PREFIX = ipaddress.IPv6Network("64:ff9b::/96")
 
 
 def _is_forbidden_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
-        ip = ip.ipv4_mapped
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        elif ip in _NAT64_PREFIX:
+            ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
     return not ip.is_global or ip.is_multicast
 
 

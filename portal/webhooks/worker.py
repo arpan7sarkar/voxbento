@@ -61,14 +61,18 @@ async def post_to_vetted_ip(
     url = httpx.URL(target_url)
     headers = {**headers, "Host": url.netloc.decode("ascii")}
     extensions = {"sni_hostname": url.raw_host.decode("ascii")}
-    for ip in vetted_ips[:-1]:
+    # One address per family falls back across IPv6 and IPv4 without letting a name with
+    # many unreachable records hold the worker for one connect timeout each.
+    first_per_family: dict[bool, str] = {}
+    for ip in vetted_ips:
+        first_per_family.setdefault(":" in ip, ip)
+    *fallbacks, last = first_per_family.values()
+    for ip in fallbacks:
         try:
             return await client.post(url.copy_with(host=ip), content=content, headers=headers, extensions=extensions)
         except (httpx.ConnectError, httpx.ConnectTimeout):
             continue
-    return await client.post(
-        url.copy_with(host=vetted_ips[-1]), content=content, headers=headers, extensions=extensions
-    )
+    return await client.post(url.copy_with(host=last), content=content, headers=headers, extensions=extensions)
 
 
 async def process_delivery(client: httpx.AsyncClient, db, delivery: WebhookDelivery) -> None:

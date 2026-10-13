@@ -73,6 +73,9 @@ async def test_validate_ssrf():
     # Valid HTTPS external URL
     assert await validate_ssrf("https://webhook.site/123") == ["178.63.67.106"]
 
+    # NAT64 is checked by the IPv4 address it embeds
+    assert await validate_ssrf("https://[64:ff9b::5db8:d822]/hook") == ["64:ff9b::5db8:d822"]
+
     # HTTP is rejected (must use HTTPS)
     with pytest.raises(HTTPException) as exc:
         await validate_ssrf("http://example.com/api/webhooks")
@@ -121,6 +124,8 @@ async def test_validate_ssrf():
         ["0.0.0.0"],
         ["::"],
         ["::ffff:127.0.0.1"],
+        ["64:ff9b::a00:1"],
+        ["2002:a00:1::1"],
         ["240.0.0.1"],
         ["100.64.0.1"],
         ["224.0.0.1"],
@@ -248,7 +253,7 @@ async def test_process_delivery_rejects_rebound_dns(db, dns):
 @pytest.mark.anyio
 @pytest.mark.parametrize("connect_failure", [httpx.ConnectError, httpx.ConnectTimeout])
 async def test_process_delivery_keeps_port_and_tries_next_vetted_ip(db, dns, connect_failure):
-    dns["dual.example.org"] = ["2606:2800:220:1::1", "93.184.216.34"]
+    dns["dual.example.org"] = ["2606:2800:220:1::1", "2606:2800:220:1::2", "93.184.216.34"]
     delivery = await _make_delivery(db, "https://dual.example.org:8443/hook?a=1")
 
     mock_client = AsyncMock(spec=httpx.AsyncClient)
