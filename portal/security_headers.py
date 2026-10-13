@@ -23,7 +23,7 @@ def apply_security_headers(headers: MutableHeaders, path: str) -> None:
     headers.setdefault("Referrer-Policy", referrer_policy)
     headers.setdefault("Content-Security-Policy", frame_ancestors)
     if settings.is_https:
-        headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+        headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 
 
 class SecurityHeadersMiddleware:

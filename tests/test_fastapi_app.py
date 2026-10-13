@@ -1949,7 +1949,7 @@ def test_security_headers_on_pages(monkeypatch, path):
     assert res.headers["x-content-type-options"] == "nosniff"
     assert res.headers["referrer-policy"] == "strict-origin-when-cross-origin"
     assert res.headers["content-security-policy"] == "frame-ancestors 'self'"
-    assert res.headers["strict-transport-security"] == "max-age=31536000"
+    assert res.headers["strict-transport-security"] == "max-age=31536000; includeSubDomains"
 
 
 def test_no_hsts_for_plain_http_deployment(monkeypatch):
