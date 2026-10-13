@@ -176,7 +176,14 @@ async def listen_event_page(request: Request, event_slug: str, code: str | None 
         },
     )
     if code and code == ev.listener_join_code:
-        response.set_cookie(f"listener_code_{event_slug}", code, httponly=True, max_age=31536000)
+        response.set_cookie(
+            f"listener_code_{event_slug}",
+            code,
+            httponly=True,
+            samesite="lax",
+            secure=settings.is_https,
+            max_age=31536000,
+        )
     return response
 
 

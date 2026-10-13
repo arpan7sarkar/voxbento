@@ -28,6 +28,7 @@ from portal.routers.oauth import router as oauth_router
 from portal.routers.program_ingest import router as program_ingest_router
 from portal.routers.public import router as public_router
 from portal.routers.webhooks import router as webhooks_router
+from portal.security_headers import SecurityHeadersMiddleware
 from portal.websockets.handlers import router as ws_router
 from portal.workspace_routing import WorkspaceRoutingMiddleware
 
@@ -128,6 +129,7 @@ class _UvicornTokenRedactor(logging.Filter):
 
 app = FastAPI(title="Voxbento", version="1.0.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(WorkspaceRoutingMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 @app.get("/docs", include_in_schema=False)
