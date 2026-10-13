@@ -6,8 +6,8 @@ import logging
 import os
 import secrets
 import socket
-import urllib.parse
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -52,23 +52,26 @@ async def validate_ssrf(url: str) -> list[str] | None:
     reaches internal services. Returns None for the development localhost bypass.
     """
     try:
-        parsed = urllib.parse.urlparse(url)
-        hostname = parsed.hostname
-        if os.getenv("ENVIRONMENT") == "development" and hostname in _DEV_LOCAL_HOSTS:
+        parsed = httpx.URL(url)
+        if os.getenv("ENVIRONMENT") == "development" and parsed.host in _DEV_LOCAL_HOSTS:
             return None
 
         if parsed.scheme != "https":
             raise ValueError("Webhook URLs must use HTTPS.")
-        if not hostname:
+        if not parsed.host:
             raise ValueError("Invalid hostname.")
+        if parsed.port is not None and not 0 < parsed.port < 65536:
+            raise ValueError("Invalid port.")
 
-        infos = await asyncio.get_running_loop().getaddrinfo(hostname, parsed.port or 443, type=socket.SOCK_STREAM)
+        infos = await asyncio.get_running_loop().getaddrinfo(
+            parsed.raw_host.decode("ascii"), None, type=socket.SOCK_STREAM
+        )
         ips = list(dict.fromkeys(info[4][0] for info in infos))
         for ip in ips:
             if _is_forbidden_ip(ipaddress.ip_address(ip)):
                 raise ValueError(f"Webhook URL resolves to a forbidden internal IP address ({ip}).")
         return ips
-    except (ValueError, OSError) as e:
+    except (httpx.InvalidURL, ValueError, OSError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid webhook URL: {e}")
 
 

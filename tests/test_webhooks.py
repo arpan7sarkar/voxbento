@@ -97,6 +97,17 @@ async def test_validate_ssrf():
         await validate_ssrf("ftp://example.com")
     assert exc.value.status_code == 400
 
+    # Inputs urllib and httpx parse differently must be rejected, not delivered
+    for url in (
+        " https://example.com/hook",
+        "https://0135.0270.0330.042/hook",
+        "https://example.com:99999/hook",
+        "https://example.com:x/hook",
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await validate_ssrf(url)
+        assert exc.value.status_code == 400
+
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
@@ -235,12 +246,13 @@ async def test_process_delivery_rejects_rebound_dns(db, dns):
 
 
 @pytest.mark.anyio
-async def test_process_delivery_keeps_port_and_tries_next_vetted_ip(db, dns):
+@pytest.mark.parametrize("connect_failure", [httpx.ConnectError, httpx.ConnectTimeout])
+async def test_process_delivery_keeps_port_and_tries_next_vetted_ip(db, dns, connect_failure):
     dns["dual.example.org"] = ["2606:2800:220:1::1", "93.184.216.34"]
     delivery = await _make_delivery(db, "https://dual.example.org:8443/hook?a=1")
 
     mock_client = AsyncMock(spec=httpx.AsyncClient)
-    mock_client.post.side_effect = [httpx.ConnectError("Network is unreachable"), MagicMock()]
+    mock_client.post.side_effect = [connect_failure("IPv6 unreachable"), MagicMock()]
     await process_delivery(mock_client, db, delivery)
 
     assert delivery.status == "succeeded"

@@ -61,13 +61,14 @@ async def post_to_vetted_ip(
     url = httpx.URL(target_url)
     headers = {**headers, "Host": url.netloc.decode("ascii")}
     extensions = {"sni_hostname": url.raw_host.decode("ascii")}
-    last_error: httpx.ConnectError | None = None
-    for ip in vetted_ips:
+    for ip in vetted_ips[:-1]:
         try:
             return await client.post(url.copy_with(host=ip), content=content, headers=headers, extensions=extensions)
-        except httpx.ConnectError as e:
-            last_error = e
-    raise last_error
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            continue
+    return await client.post(
+        url.copy_with(host=vetted_ips[-1]), content=content, headers=headers, extensions=extensions
+    )
 
 
 async def process_delivery(client: httpx.AsyncClient, db, delivery: WebhookDelivery) -> None:
@@ -150,9 +151,12 @@ async def process_delivery(client: httpx.AsyncClient, db, delivery: WebhookDeliv
 
 async def webhook_worker_loop():
     """Background polling worker for webhooks."""
-    # Pooled connections are keyed by the pinned IP, so a TLS session verified for one
-    # webhook hostname must not be reused for another hostname on the same IP.
-    async with httpx.AsyncClient(timeout=5.0, limits=httpx.Limits(max_keepalive_connections=0)) as client:
+    # Delivery connects to the IP vetted by validate_ssrf. Pooled connections are keyed by
+    # that IP, so keep-alive would reuse a TLS session verified for one webhook hostname for
+    # another. The explicit transport also skips environment proxies, which would tunnel to
+    # the IP and verify TLS against it.
+    transport = httpx.AsyncHTTPTransport(limits=httpx.Limits(max_keepalive_connections=0))
+    async with httpx.AsyncClient(timeout=5.0, transport=transport) as client:
         while True:
             try:
                 claimed = False
