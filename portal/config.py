@@ -121,7 +121,7 @@ class Settings(BaseSettings):
     @property
     def is_https(self) -> bool:
         """Whether browsers reach the portal over HTTPS (Secure cookies, HSTS)."""
-        return self.public_base_url.startswith("https://")
+        return urlparse(self.public_base_url).scheme == "https"
 
 
 settings = Settings()

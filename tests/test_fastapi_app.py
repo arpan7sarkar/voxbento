@@ -1982,6 +1982,20 @@ def test_embed_error_keeps_embed_frame_policy(monkeypatch):
     res = client.get("/embed/test-event/en?token=invalid", headers={"accept": "text/html"})
     assert res.status_code == 403
     assert res.headers["content-security-policy"] == "frame-ancestors https://eventyay.com"
+    assert res.headers["referrer-policy"] == "no-referrer"
+
+
+def test_unhandled_error_response_has_security_headers():
+    import anyio
+    from starlette.requests import Request
+
+    from fastapi_app import general_exception_handler
+
+    request = Request({"type": "http", "method": "GET", "path": "/boom", "headers": [], "query_string": b""})
+    res = anyio.run(general_exception_handler, request, RuntimeError("boom"))
+    assert res.status_code == 500
+    assert res.headers["x-content-type-options"] == "nosniff"
+    assert res.headers["content-security-policy"] == "frame-ancestors 'self'"
 
 
 def test_embed_headless_mode_config():

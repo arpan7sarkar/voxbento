@@ -175,10 +175,12 @@ async def listen_event_page(request: Request, event_slug: str, code: str | None 
             "share_url": f"{settings.public_base_url}/listener/{ev.slug}",
         },
     )
-    if code and code == ev.listener_join_code:
+    # Reissue on cookie visits too, so cookies set before the Secure flag existed get upgraded.
+    submitted_code = _submitted_code(request, event_slug, code)
+    if submitted_code and submitted_code == ev.listener_join_code:
         response.set_cookie(
             f"listener_code_{event_slug}",
-            code,
+            submitted_code,
             httponly=True,
             samesite="lax",
             secure=settings.is_https,
