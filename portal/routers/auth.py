@@ -183,8 +183,10 @@ async def verify_email_route(request: Request, token: str):
     async with get_session() as session:
         try:
             auth_token = await redeem_auth_token(session, token, "verification")
-            user = await update_user(session, auth_token.user_id, email_verified=True)
-            schedule_onboarding_email(user)
+            user = await get_user_by_id(session, auth_token.user_id)
+            if not user.email_verified:
+                await update_user(session, user.id, email_verified=True)
+                schedule_onboarding_email(user)
 
             jwt_token = create_user_token(
                 user_id=user.id, email=user.email, display_name=user.display_name, is_admin=user.is_admin

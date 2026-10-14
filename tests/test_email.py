@@ -117,6 +117,21 @@ async def test_onboarding_email_not_sent_before_due_or_to_existing_users(outbox)
 
 
 @pytest.mark.anyio
+async def test_stale_verification_link_does_not_reschedule_onboarding_email(outbox):
+    from portal.database import create_auth_token, get_session
+
+    user_id = await _create_user("alice@example.com", email_verified=True)
+    async with get_session() as s:
+        await create_auth_token(s, jti="stale-tok", user_id=user_id, token_type="verification")
+
+    async with _client() as c:
+        resp = await c.get("/auth/verify/stale-tok", follow_redirects=False)
+
+    assert resp.status_code == 303
+    assert (await _get_user(user_id)).onboarding_email_due_at is None
+
+
+@pytest.mark.anyio
 async def test_failed_onboarding_send_does_not_drop_other_due_emails(outbox, monkeypatch):
     users = [await _create_user(f"u{i}@example.com") for i in range(3)]
     for user_id in users:
