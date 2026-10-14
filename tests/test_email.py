@@ -82,14 +82,16 @@ async def test_onboarding_email_is_persisted_and_sent_once(outbox, token_type, p
     async with get_session() as s:
         await create_auth_token(s, jti=f"tok-{token_type}", user_id=user_id, token_type=token_type)
 
+    before = utc_now().replace(tzinfo=None)
     async with _client() as c:
         resp = await c.get(f"{path}/tok-{token_type}", follow_redirects=False)
+    after = utc_now().replace(tzinfo=None)
     assert resp.status_code == 303
     assert outbox == []
 
     due_at = (await _get_user(user_id)).onboarding_email_due_at
     assert due_at is not None
-    assert timedelta(minutes=14) < due_at.replace(tzinfo=None) - utc_now().replace(tzinfo=None) <= timedelta(minutes=15)
+    assert before + timedelta(minutes=15) <= due_at.replace(tzinfo=None) <= after + timedelta(minutes=15)
 
     # The due time lives in the database, so a fresh process sends it once the delay has passed.
     await _set_due(user_id, utc_now() - timedelta(seconds=1))
