@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi_mail import ConnectionConfig, FastMail, MessageSchema, MessageType
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from portal.config import settings
@@ -157,16 +157,20 @@ def schedule_onboarding_email(user: User) -> None:
 
 async def send_due_onboarding_emails() -> None:
     # Clearing the due time before sending claims each row once, even with several workers.
-    async with get_session() as session:
-        result = await session.execute(
-            update(User)
-            .where(User.onboarding_email_due_at <= utc_now())
-            .values(onboarding_email_due_at=None)
-            .returning(User.email, User.display_name)
-        )
-        due = result.all()
-    for email_to, display_name in due:
-        await send_onboarding_email(email_to, display_name)
+    # One row per transaction, so a crash mid-send loses at most the email in flight.
+    while True:
+        async with get_session() as session:
+            next_due = select(User.id).where(User.onboarding_email_due_at <= utc_now()).limit(1)
+            result = await session.execute(
+                update(User)
+                .where(User.id.in_(next_due), User.onboarding_email_due_at.is_not(None))
+                .values(onboarding_email_due_at=None)
+                .returning(User.email, User.display_name)
+            )
+            claimed = result.first()
+        if claimed is None:
+            return
+        await send_onboarding_email(*claimed)
 
 
 async def onboarding_email_loop() -> None:

@@ -117,6 +117,26 @@ async def test_onboarding_email_not_sent_before_due_or_to_existing_users(outbox)
 
 
 @pytest.mark.anyio
+async def test_failed_onboarding_send_does_not_drop_other_due_emails(outbox, monkeypatch):
+    users = [await _create_user(f"u{i}@example.com") for i in range(3)]
+    for user_id in users:
+        await _set_due(user_id, utc_now() - timedelta(seconds=1))
+
+    real_send = email_mod.send_onboarding_email
+
+    async def crash_once(email_to, display_name):
+        monkeypatch.setattr(email_mod, "send_onboarding_email", real_send)
+        raise RuntimeError("process died mid-send")
+
+    monkeypatch.setattr(email_mod, "send_onboarding_email", crash_once)
+    with pytest.raises(RuntimeError):
+        await email_mod.send_due_onboarding_emails()
+    await email_mod.send_due_onboarding_emails()
+
+    assert len(outbox) == 2
+
+
+@pytest.mark.anyio
 async def test_demo_request_sender_is_not_changed_by_onboarding_email(outbox):
     await email_mod.send_onboarding_email("alice@example.com", "Alice")
     await email_mod.send_demo_request_email({"email": "lead@example.com", "firstName": "Lee"})
