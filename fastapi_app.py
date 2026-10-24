@@ -15,9 +15,10 @@ from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from portal import meeting_source, program_ingest
-from portal.auth import require_admin
+from portal.auth import require_owner_or_coordinator
 from portal.config import settings
 from portal.exceptions import RedirectRequired
+from portal.globals import asset_version_context
 from portal.routers.admin import router as admin_router
 from portal.routers.api import router as api_router
 from portal.routers.api_v1 import router as api_v1_router
@@ -39,7 +40,7 @@ from portal.workspace_routing import WorkspaceRoutingMiddleware
 
 _BASE_DIR = Path(__file__).resolve().parent
 
-templates = Jinja2Templates(directory=str(_BASE_DIR / "portal" / "templates"))
+templates = Jinja2Templates(directory=str(_BASE_DIR / "portal" / "templates"), context_processors=[asset_version_context])
 
 
 @asynccontextmanager
@@ -67,11 +68,13 @@ async def lifespan(app: FastAPI):
 
     import asyncio
 
+    import portal.notifications as _notifications_mod
     import portal.webhooks.worker as _webhook_worker_mod
 
     # Reference via module attribute so test-time monkey-patching of
     # portal.webhooks.worker.webhook_worker_loop is respected.
     webhook_task = asyncio.create_task(_webhook_worker_mod.webhook_worker_loop())
+    notification_task = asyncio.create_task(_notifications_mod.notification_worker_loop())
     ingest_task = asyncio.create_task(program_ingest.reconcile_loop()) if settings.program_ingest_enabled else None
     meeting_task = asyncio.create_task(meeting_source.reconcile_loop())
 
@@ -83,6 +86,7 @@ async def lifespan(app: FastAPI):
     import contextlib
 
     webhook_task.cancel()
+    notification_task.cancel()
     meeting_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await meeting_task
@@ -92,6 +96,8 @@ async def lifespan(app: FastAPI):
             await ingest_task
     with contextlib.suppress(asyncio.CancelledError):
         await webhook_task
+    with contextlib.suppress(asyncio.CancelledError):
+        await notification_task
 
     if pg.shared_http_client:
         await pg.shared_http_client.aclose()
@@ -117,8 +123,8 @@ class _UvicornTokenRedactor(logging.Filter):
             return True
 
         lowered = message.casefold()
-        if any(x in lowered for x in ["token=", "client_secret=", "code=", "key="]) and any(
-            x in lowered for x in ["/embed/", "/ws/", "/oauth/", "/internal/"]
+        if self._TOKEN_RE.search(message) and any(
+            x in lowered for x in ["/api/", "/embed/", "/ws/", "/oauth/", "/internal/"]
         ):
             if isinstance(record.msg, str):
                 record.msg = self._TOKEN_RE.sub(r"\1[REDACTED]", record.msg)
@@ -136,12 +142,12 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 
 @app.get("/docs", include_in_schema=False)
-async def custom_swagger_ui_html(request: Request, _=Depends(require_admin)):
+async def custom_swagger_ui_html(request: Request, _=Depends(require_owner_or_coordinator)):
     return get_swagger_ui_html(openapi_url="/openapi.json", title="Voxbento API Docs")
 
 
 @app.get("/openapi.json", include_in_schema=False)
-async def get_open_api_endpoint(request: Request, _=Depends(require_admin)):
+async def get_open_api_endpoint(request: Request, _=Depends(require_owner_or_coordinator)):
     return JSONResponse(get_openapi(title="Voxbento API", version="1.0.0", routes=app.routes))
 
 

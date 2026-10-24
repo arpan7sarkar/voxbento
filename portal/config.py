@@ -104,10 +104,26 @@ class Settings(BaseSettings):
                 "MEDIAMTX_AUTH_HOOK_SECRET is not set. Configure the same random value for "
                 "the portal and MediaMTX. Generate one with: openssl rand -hex 32"
             )
+        booth_access_token = self.booth_access_token.strip()
+        if booth_access_token in {"", "change-me", "secret", "your-secret-key"} or len(booth_access_token) < 32:
+            raise RuntimeError(
+                "BOOTH_ACCESS_TOKEN is not configured with a strong value. "
+                "Set a secret access token before exposing legacy API endpoints in production. "
+                "Generate one with: openssl rand -hex 32"
+            )
         if self.program_relay_enabled and len(self.program_relay_control_secret) < 32:
             raise RuntimeError(
                 "PROGRAM_RELAY_ENABLED requires PROGRAM_RELAY_CONTROL_SECRET (at least 32 characters), "
                 "shared with the program-relay service. Generate one with: openssl rand -hex 32"
+            )
+        # Every outgoing email is encrypted at rest in the outbox, so sign-in links,
+        # invitations and password resets cannot be sent without this key.
+        encryption_key = (self.api_key_encryption_key or "").strip()
+        if encryption_key in {"", "change-this-encryption-key-in-production", "your-secure-32-char-key-here"}:
+            raise RuntimeError(
+                "API_KEY_ENCRYPTION_KEY is not set. It encrypts stored provider keys and queued email, "
+                "so sign-in and invitation emails cannot be sent without it. "
+                "Generate one with: openssl rand -hex 32 (to rotate, list the new key first, comma-separated)"
             )
 
     # Transcription Settings
@@ -128,6 +144,8 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from_email: str = "noreply@voxbento.com"
+    # Team inbox notified of each new hosting access request.
+    hosting_requests_email: str = "voxbento.dev@gmail.com"
     public_base_url: str = "https://voxbento.com"
 
     @property
