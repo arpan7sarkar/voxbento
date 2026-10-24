@@ -20,12 +20,20 @@
 
     <div id="alert-container" class="alert alert-error hidden"></div>
     <div id="success-container" class="alert alert-success hidden"></div>
+    <div id="waiting-container" class="alert alert-success login-waiting hidden" role="status">
+      <p class="login-waiting-title">We've emailed you a sign-in link.</p>
+      <p class="login-waiting-text">
+        Open it in this browser and this page continues on its own. If you open it on another
+        device or browser, you'll be signed in there instead.
+        <a href="#" id="request-new-link">Request a new link</a>
+      </p>
+    </div>
 
     <!-- Step 1: Email Only -->
     <form id="email-form" class="login-form">
       <input type="hidden" id="next_url" value="{{ next_url|default('', true) }}" />
       <label for="email">Email</label>
-      <input type="email" id="email" name="email" placeholder="you@example.com" value="{{ email|default('', true) }}" required autofocus />
+      <input type="email" id="email" name="email" placeholder="you@example.com" value="{{ email or prefill_email or '' }}" required autofocus />
       <button type="submit" id="continue-btn" class="btn btn-primary">Continue</button>
     </form>
 
@@ -52,7 +60,7 @@
     </div>
 
     <div class="login-footer">
-      <span>Don't have an account? <a href="/register">Register</a></span>
+      <span>Don't have an account? <a id="register-link" href="/register">Register</a></span>
       <a href="/">← Back to Portal Home</a>
     </div>
   </div>
@@ -72,6 +80,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const userEmailDisplay = document.getElementById("user-email-display");
   const alertContainer = document.getElementById("alert-container");
   const successContainer = document.getElementById("success-container");
+  const waitingContainer = document.getElementById("waiting-container");
+  const requestNewLink = document.getElementById("request-new-link");
   const forgotPasswordLink = document.getElementById("forgot-password-link");
 
   let currentEmail = "";
@@ -85,6 +95,25 @@ document.addEventListener("DOMContentLoaded", () => {
     successContainer.textContent = msg;
     successContainer.classList.remove("hidden");
     alertContainer.classList.add("hidden");
+    waitingContainer.classList.add("hidden");
+  }
+
+  function showWaitingNotice() {
+    waitingContainer.classList.remove("hidden");
+    alertContainer.classList.add("hidden");
+    successContainer.classList.add("hidden");
+  }
+
+  if (requestNewLink) {
+    requestNewLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      waitingContainer.classList.add("hidden");
+      magicLinkBtn.disabled = false;
+      magicLinkBtn.textContent = "Email me a magic link";
+      magicLinkBtn.classList.remove("hidden");
+      magicDivider.classList.remove("hidden");
+      passwordForm.classList.remove("hidden");
+    });
   }
 
   emailForm.addEventListener("submit", async (e) => {
@@ -100,7 +129,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const res = await fetch("/api/auth/check-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: currentEmail })
+        body: JSON.stringify({ email: currentEmail, next_url: document.getElementById('next_url').value })
       });
       const data = await res.json();
       
@@ -111,23 +140,15 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      if (!data.exists) {
-        // Redirect to register
-        window.location.href = `/register?email=${encodeURIComponent(currentEmail)}`;
-        return;
-      }
-
-      // User exists, show login methods
+       // Always show the same authentication options. Any legacy response
+       // fields are constant compatibility sentinels, not account state.
       emailForm.classList.add("hidden");
       loginMethods.classList.remove("hidden");
       userEmailDisplay.textContent = currentEmail;
       passEmailInput.value = currentEmail;
-
-      if (data.has_password) {
-        passwordForm.classList.remove("hidden");
-        magicDivider.classList.remove("hidden");
-        document.getElementById("password").focus();
-      }
+      passwordForm.classList.remove("hidden");
+      magicDivider.classList.remove("hidden");
+      document.getElementById("password").focus();
 
     } catch (err) {
       showError("Failed to connect to server");
@@ -145,14 +166,14 @@ document.addEventListener("DOMContentLoaded", () => {
       const res = await fetch("/api/auth/magic-link", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: currentEmail })
+        body: JSON.stringify({ email: currentEmail, next_url: document.getElementById('next_url').value })
       });
       
       if (res.ok) {
         passwordForm.classList.add("hidden");
         magicDivider.classList.add("hidden");
         magicLinkBtn.classList.add("hidden");
-        showSuccess("We've sent a magic link to your email. Please check your inbox.");
+        showWaitingNotice();
       } else {
         const data = await res.json();
         showError(data.detail || "Failed to send magic link");
@@ -170,12 +191,13 @@ document.addEventListener("DOMContentLoaded", () => {
     e.preventDefault();
     alertContainer.classList.add("hidden");
     successContainer.classList.add("hidden");
+    waitingContainer.classList.add("hidden");
     
     try {
       const res = await fetch("/api/auth/forgot-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: currentEmail })
+        body: JSON.stringify({ email: currentEmail, next_url: document.getElementById('next_url').value })
       });
       
       if (res.ok) {
@@ -189,4 +211,53 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 </script>
+
+<script>
+  (function() {
+      function getSafeRedirectUrl(rawUrl) {
+          if (!rawUrl || typeof rawUrl !== 'string') return '';
+          const trimmed = rawUrl.trim();
+          const lower = trimmed.toLowerCase();
+          if (trimmed.startsWith('//') || lower.startsWith('javascript:') || lower.startsWith('data:') || lower.startsWith('vbscript:')) {
+              return '';
+          }
+          try {
+              const parsed = new URL(trimmed, window.location.origin);
+              if (parsed.origin === window.location.origin &&
+                  (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+                  !parsed.pathname.startsWith('//')) {
+                  return parsed.href;
+              }
+          } catch (e) {}
+          return '';
+      }
+
+      function redirectToNext(customUrl) {
+          const nextInput = document.getElementById('next_url');
+          let target = customUrl || (nextInput ? nextInput.value : '');
+          if (!target || target === 'None') {
+              const urlParams = new URLSearchParams(window.location.search);
+              target = urlParams.get('next') || '';
+          }
+          const safeTarget = getSafeRedirectUrl(target);
+          if (safeTarget) {
+              window.location.href = safeTarget;
+          } else {
+              window.location.reload();
+          }
+      }
+
+      if (typeof BroadcastChannel !== 'undefined') {
+          const authChannel = new BroadcastChannel('voxbento_auth');
+          authChannel.onmessage = (e) => {
+              const isLogin = e.data === 'logged_in' || (e.data && e.data.type === 'logged_in');
+              if (isLogin) {
+                  const url = e.data && e.data.url ? e.data.url : null;
+                  redirectToNext(url);
+              }
+          };
+      }
+  })();
+</script>
+
 {% endblock %}
