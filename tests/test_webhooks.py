@@ -461,7 +461,7 @@ async def test_create_webhook_idempotency_and_deduplication(db, monkeypatch):
     from portal.models import DeveloperAccount, Event, OAuthClient, OAuthToken, User
     from portal.routers.webhooks import WebhookCreate, create_webhook
 
-    monkeypatch.setattr("portal.routers.webhooks.validate_ssrf", lambda url: None)
+    monkeypatch.setattr("portal.routers.webhooks.validate_ssrf", AsyncMock(return_value=None))
 
     user = User(email="dev@example.com", display_name="Dev User", is_active=True)
     db.add(user)
@@ -570,7 +570,7 @@ async def test_create_webhook_quota_limit(db, monkeypatch):
     from portal.models import DeveloperAccount, Event, OAuthClient, OAuthToken, User
     from portal.routers.webhooks import WebhookCreate, create_webhook
 
-    monkeypatch.setattr("portal.routers.webhooks.validate_ssrf", lambda url: None)
+    monkeypatch.setattr("portal.routers.webhooks.validate_ssrf", AsyncMock(return_value=None))
     monkeypatch.setattr(settings, "max_webhook_subscriptions", 3)
 
     user = User(email="quota@example.com", display_name="Quota User", is_active=True)
