@@ -14,10 +14,10 @@ on:
 
   workflow_dispatch:
 
-# Cancel superseded runs on the same PR / branch
+# Cancel superseded runs on the same PR; allow post-merge and branch pushes to run to completion
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -251,10 +251,12 @@ jobs:
           node --check portal/static/js/interpreter-booth.js
           node --check portal/static/js/whep-listener.js
           node --check portal/static/js/admin.js
+          node --check .github/scripts/jules-review.mjs
       - name: run node tests
         run: |
           node tests/test_audio_scheduler.js
           node tests/test_tts_parser.js
+          node tests/test_jules_review.mjs
 
       - name: Run unit tests
         run: uv run pytest tests/ -v
@@ -273,7 +275,7 @@ jobs:
       MEDIAMTX_API_PORT: 9997
       JITSI_HTTP_PORT: 8080
       SECRET_KEY: ci-test-secret-key-not-for-production
-      BOOTH_ACCESS_TOKEN: ci-test-token
+      BOOTH_ACCESS_TOKEN: ci-test-token-generated-with-openssl-rand-hex-32
       JVB_ADVERTISE_IPS: 127.0.0.1
       JITSI_DOMAIN: localhost:8080
       MEDIAMTX_WHIP_BASE: http://localhost:8889
