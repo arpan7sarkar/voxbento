@@ -42,13 +42,13 @@ def no_membership_recheck(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def setup_db():
-    """Initialize an in-memory SQLite database for test isolation."""
+def setup_db(tmp_path):
+    """Initialize an isolated SQLite database for concurrent WebSocket sessions."""
     import anyio
 
     from portal.database import configure, dispose, init_db
 
-    configure("sqlite+aiosqlite://")
+    configure(f"sqlite+aiosqlite:///{tmp_path / 'websocket.db'}")
     anyio.run(init_db)
     yield
     anyio.run(dispose)
