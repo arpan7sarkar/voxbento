@@ -108,8 +108,6 @@ The encryption key protects stored provider keys and queued email.
 The welcome email is queued for delivery 15 minutes after verification or magic-link sign-in changes an unverified account to verified.
 Already-verified accounts do not gain a welcome email or change an existing welcome delivery time by redeeming an old verification link.
 
-Email branding defaults to the VoxBento V mark with a transparent background, suitable for light and dark backgrounds. Leave the logo address empty in **Admin → Emails → Branding** to use it. The SVG source is `portal/static/img/email-mark.svg`; emails use its high-resolution transparent PNG export for mail-client compatibility. Set `PUBLIC_BASE_URL` to your publicly reachable HTTPS portal URL so recipients can load the image; browser previews load the bundled image from the current site. Custom HTTPS logo images and hiding the logo are still supported. Mail apps that block images may show the VoxBento alternative text until the recipient enables images.
-
 ```bash
 uv run python -c "
 import secrets, re
